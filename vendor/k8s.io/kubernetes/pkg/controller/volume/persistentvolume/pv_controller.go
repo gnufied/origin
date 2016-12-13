@@ -935,8 +935,7 @@ func (ctrl *PersistentVolumeController) reclaimVolume(volume *api.PersistentVolu
 		glog.V(4).Infof("reclaimVolume[%s]: policy is Delete", volume.Name)
 		opName := fmt.Sprintf("delete-%s[%s]", volume.Name, string(volume.UID))
 		ctrl.scheduleOperation(opName, func() error {
-			ctrl.deleteVolumeOperation(volume)
-			return nil
+			return ctrl.deleteVolumeOperation(volume)
 		})
 
 	default:
@@ -1041,11 +1040,11 @@ func (ctrl *PersistentVolumeController) recycleVolumeOperation(arg interface{}) 
 
 // deleteVolumeOperation deletes a volume. This method is running in standalone
 // goroutine and already has all necessary locks.
-func (ctrl *PersistentVolumeController) deleteVolumeOperation(arg interface{}) {
+func (ctrl *PersistentVolumeController) deleteVolumeOperation(arg interface{}) error {
 	volume, ok := arg.(*api.PersistentVolume)
 	if !ok {
 		glog.Errorf("Cannot convert deleteVolumeOperation argument to volume, got %#v", arg)
-		return
+		return nil
 	}
 	glog.V(4).Infof("deleteVolumeOperation [%s] started", volume.Name)
 
@@ -1055,29 +1054,43 @@ func (ctrl *PersistentVolumeController) deleteVolumeOperation(arg interface{}) {
 	newVolume, err := ctrl.kubeClient.Core().PersistentVolumes().Get(volume.Name)
 	if err != nil {
 		glog.V(3).Infof("error reading peristent volume %q: %v", volume.Name, err)
-		return
+		return nil
 	}
 	needsReclaim, err := ctrl.isVolumeReleased(newVolume)
 	if err != nil {
 		glog.V(3).Infof("error reading claim for volume %q: %v", volume.Name, err)
-		return
+		return nil
 	}
 	if !needsReclaim {
 		glog.V(3).Infof("volume %q no longer needs deletion, skipping", volume.Name)
-		return
+		return nil
 	}
 
-	if err = ctrl.doDeleteVolume(volume); err != nil {
+	deleted, err := ctrl.doDeleteVolume(volume)
+	if err != nil {
 		// Delete failed, update the volume and emit an event.
 		glog.V(3).Infof("deletion of volume %q failed: %v", volume.Name, err)
-		if _, err = ctrl.updateVolumePhaseWithEvent(volume, api.VolumeFailed, api.EventTypeWarning, "VolumeFailedDelete", err.Error()); err != nil {
-			glog.V(4).Infof("deleteVolumeOperation [%s]: failed to mark volume as failed: %v", volume.Name, err)
-			// Save failed, retry on the next deletion attempt
-			return
+		if vol.IsDeletedVolumeInUse(err) {
+			// The plugin needs more time, don't mark the volume as Failed
+			// and send Normal event only
+			ctrl.eventRecorder.Event(volume, api.EventTypeNormal, "VolumeDelete", err.Error())
+		} else {
+			// The plugin failed, mark the volume as Failed and send Warning
+			// event
+			if _, err = ctrl.updateVolumePhaseWithEvent(volume, api.VolumeFailed, api.EventTypeWarning, "VolumeFailedDelete", err.Error()); err != nil {
+				glog.V(4).Infof("deleteVolumeOperation [%s]: failed to mark volume as failed: %v", volume.Name, err)
+				// Save failed, retry on the next deletion attempt
+				return err
+			}
 		}
+
 		// Despite the volume being Failed, the controller will retry deleting
 		// the volume in every syncVolume() call.
-		return
+		return err
+	}
+	if !deleted {
+		// The volume waits for deletion by an external plugin. Do nothing.
+		return err
 	}
 
 	glog.V(4).Infof("deleteVolumeOperation [%s]: success", volume.Name)
@@ -1088,9 +1101,9 @@ func (ctrl *PersistentVolumeController) deleteVolumeOperation(arg interface{}) {
 		// cache of "recently deleted volumes" and avoid unnecessary deletion,
 		// this is left out as future optimization.
 		glog.V(3).Infof("failed to delete volume %q from database: %v", volume.Name, err)
-		return
+		return nil
 	}
-	return
+	return nil
 }
 
 // isVolumeReleased returns true if given volume is released and can be recycled
@@ -1135,51 +1148,40 @@ func (ctrl *PersistentVolumeController) isVolumeReleased(volume *api.PersistentV
 	return true, nil
 }
 
-// doDeleteVolume finds appropriate delete plugin and deletes given volume
-// (it will be re-used in future provisioner error cases).
-func (ctrl *PersistentVolumeController) doDeleteVolume(volume *api.PersistentVolume) error {
+// doDeleteVolume finds appropriate delete plugin and deletes given volume. It
+// returns 'true', when the volume was deleted and 'false' when the volume
+// cannot be deleted because of the deleter is external. No error should be
+// reported in this case.
+func (ctrl *PersistentVolumeController) doDeleteVolume(volume *api.PersistentVolume) (bool, error) {
 	glog.V(4).Infof("doDeleteVolume [%s]", volume.Name)
 	var err error
 
-	// Find a plugin. Try to find the same plugin that provisioned the volume
-	var plugin vol.DeletableVolumePlugin
-	if hasAnnotation(volume.ObjectMeta, annDynamicallyProvisioned) {
-		provisionPluginName := volume.Annotations[annDynamicallyProvisioned]
-		if provisionPluginName != "" {
-			plugin, err = ctrl.volumePluginMgr.FindDeletablePluginByName(provisionPluginName)
-			if err != nil {
-				glog.V(3).Infof("did not find a deleter plugin %q for volume %q: %v, will try to find a generic one",
-					provisionPluginName, volume.Name, err)
-			}
-		}
+	plugin, err := ctrl.findDeletablePlugin(volume)
+	if err != nil {
+		return false, err
 	}
-
-	spec := vol.NewSpecFromPersistentVolume(volume, false)
 	if plugin == nil {
-		// The plugin that provisioned the volume was not found or the volume
-		// was not dynamically provisioned. Try to find a plugin by spec.
-		plugin, err = ctrl.volumePluginMgr.FindDeletablePluginBySpec(spec)
-		if err != nil {
-			// No deleter found. Emit an event and mark the volume Failed.
-			return fmt.Errorf("Error getting deleter volume plugin for volume %q: %v", volume.Name, err)
-		}
+		// External deleter is requested, do nothing
+		glog.V(3).Infof("external deleter for volume %q requested, ignoring", volume.Name)
+		return false, nil
 	}
-	glog.V(5).Infof("found a deleter plugin %q for volume %q", plugin.GetPluginName(), volume.Name)
 
 	// Plugin found
+	glog.V(5).Infof("found a deleter plugin %q for volume %q", plugin.GetPluginName(), volume.Name)
+	spec := vol.NewSpecFromPersistentVolume(volume, false)
 	deleter, err := plugin.NewDeleter(spec)
 	if err != nil {
 		// Cannot create deleter
-		return fmt.Errorf("Failed to create deleter for volume %q: %v", volume.Name, err)
+		return false, fmt.Errorf("Failed to create deleter for volume %q: %v", volume.Name, err)
 	}
 
 	if err = deleter.Delete(); err != nil {
 		// Deleter failed
-		return fmt.Errorf("Delete of volume %q failed: %v", volume.Name, err)
+		return false, err
 	}
 
 	glog.V(2).Infof("volume %q deleted", volume.Name)
-	return nil
+	return true, nil
 }
 
 // provisionClaim starts new asynchronous operation to provision a claim if
@@ -1331,9 +1333,17 @@ func (ctrl *PersistentVolumeController) provisionClaimOperation(claimObj interfa
 		ctrl.eventRecorder.Event(claim, api.EventTypeWarning, "ProvisioningFailed", strerr)
 
 		for i := 0; i < ctrl.createProvisionedPVRetryCount; i++ {
-			if err = ctrl.doDeleteVolume(volume); err == nil {
+			deleted, err := ctrl.doDeleteVolume(volume)
+			if err == nil && deleted {
 				// Delete succeeded
 				glog.V(4).Infof("provisionClaimOperation [%s]: cleaning volume %s succeeded", claimToClaimKey(claim), volume.Name)
+				break
+			}
+			if !deleted {
+				// This is unreachable code, the volume was provisioned by an
+				// internal plugin and therefore there MUST be an internal
+				// plugin that deletes it.
+				glog.Errorf("Error finding internal deleter for volume plugin %q", plugin.GetPluginName())
 				break
 			}
 			// Delete failed, try again after a while.
@@ -1452,4 +1462,35 @@ func (ctrl *PersistentVolumeController) findAlphaProvisionablePlugin() (vol.Prov
 	}
 	glog.V(4).Infof("using alpha provisioner %s", ctrl.alphaProvisioner.GetPluginName())
 	return ctrl.alphaProvisioner, storageClass, nil
+}
+
+// findDeletablePlugin finds a deleter plugin for a given volume. It returns
+// either the deleter plugin or nil when an external deleter is requested.
+func (ctrl *PersistentVolumeController) findDeletablePlugin(volume *api.PersistentVolume) (vol.DeletableVolumePlugin, error) {
+	// Find a plugin. Try to find the same plugin that provisioned the volume
+	var plugin vol.DeletableVolumePlugin
+	if hasAnnotation(volume.ObjectMeta, annDynamicallyProvisioned) {
+		provisionPluginName := volume.Annotations[annDynamicallyProvisioned]
+		if provisionPluginName != "" {
+			plugin, err := ctrl.volumePluginMgr.FindDeletablePluginByName(provisionPluginName)
+			if err != nil {
+				if !strings.HasPrefix(provisionPluginName, "kubernetes.io/") {
+					// External provisioner is requested, do not report error
+					return nil, nil
+				}
+				return nil, err
+			}
+			return plugin, nil
+		}
+	}
+
+	// The plugin that provisioned the volume was not found or the volume
+	// was not dynamically provisioned. Try to find a plugin by spec.
+	spec := vol.NewSpecFromPersistentVolume(volume, false)
+	plugin, err := ctrl.volumePluginMgr.FindDeletablePluginBySpec(spec)
+	if err != nil {
+		// No deleter found. Emit an event and mark the volume Failed.
+		return nil, fmt.Errorf("Error getting deleter volume plugin for volume %q: %v", volume.Name, err)
+	}
+	return plugin, nil
 }
