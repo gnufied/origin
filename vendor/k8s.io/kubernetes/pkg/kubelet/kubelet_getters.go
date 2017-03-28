@@ -244,6 +244,14 @@ func (kl *Kubelet) GetExtraSupplementalGroupsForPod(pod *api.Pod) []int64 {
 func (kl *Kubelet) getPodVolumeNameListFromDisk(podUID types.UID) ([]string, error) {
 	volumes := []string{}
 	podVolDir := kl.getPodVolumesDir(podUID)
+
+	if pathExists, pathErr := volumeutil.PathExists(podVolDir); pathErr != nil {
+		return volumes, fmt.Errorf("Error checking if path %q exists: %v", podVolDir, pathErr)
+	} else if !pathExists {
+		glog.Warningf("Warning: path %q does not exist: %q", podVolDir)
+		return volumes, nil
+	}
+
 	volumePluginDirs, err := ioutil.ReadDir(podVolDir)
 	if err != nil {
 		glog.Errorf("Could not read directory %s: %v", podVolDir, err)

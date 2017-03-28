@@ -153,8 +153,14 @@ func (kl *Kubelet) cleanupOrphanedPodDirs(
 			continue
 		}
 		// Check whether volume is still mounted on disk. If so, do not delete directory
-		if volumeNames, err := kl.getPodVolumeNameListFromDisk(uid); err != nil || len(volumeNames) != 0 {
-			glog.V(3).Infof("Orphaned pod %q found, but volumes are still mounted; err: %v, volumes: %v ", uid, err, volumeNames)
+		volumeNames, err := kl.getPodVolumeNameListFromDisk(uid)
+		if err != nil {
+			glog.Errorf("Orphaned pod %q found, but error %v occurred during reading volume dir from disk", uid, err)
+			continue
+		}
+
+		if len(volumeNames) > 0 {
+			glog.Errorf("Orphaned pod %q found, but volume paths are still present on disk.", uid)
 			continue
 		}
 
