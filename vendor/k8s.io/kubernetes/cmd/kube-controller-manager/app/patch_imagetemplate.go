@@ -5,8 +5,6 @@ import (
 	"os"
 	"strings"
 
-	"k8s.io/kubernetes/pkg/version"
-
 	"github.com/golang/glog"
 )
 
@@ -114,23 +112,21 @@ type KeyFunc func(key string) (string, bool)
 
 // Versions is a KeyFunc for retrieving information about the current version.
 func Versions(key string) (string, bool) {
+	openshiftVersion := GetOpenshiftVersion()
 	switch key {
 	case "shortcommit":
-		s := OverrideVersion.GitCommit
+		s := openshiftVersion.GitCommit
 		if len(s) > 7 {
 			s = s[:7]
 		}
 		return s, true
 	case "version":
-		s := lastSemanticVersion(OverrideVersion.GitVersion)
+		s := lastSemanticVersion(openshiftVersion.GitVersion)
 		return s, true
 	default:
 		return "", false
 	}
 }
-
-// OverrideVersion is the latest version, exposed for testing.
-var OverrideVersion = version.Get()
 
 // lastSemanticVersion attempts to return a semantic version from the GitVersion - which
 // is either <semver>+<commit> or <semver> on release boundaries.
