@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/golang/glog"
+	apimachineryversion "k8s.io/apimachinery/pkg/version"
 )
 
 // ImageTemplate is a class to assist in expanding parameterized Docker image references
@@ -119,7 +120,7 @@ type KeyFunc func(key string) (string, bool)
 
 // Versions is a KeyFunc for retrieving information about the current version.
 func Versions(key string) (string, bool) {
-	openshiftVersion := GetOpenshiftVersion()
+	openshiftVersion := apimachineryversion.Info{}
 	switch key {
 	case "shortcommit":
 		s := openshiftVersion.GitCommit
