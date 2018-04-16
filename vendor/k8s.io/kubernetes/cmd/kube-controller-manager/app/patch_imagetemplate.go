@@ -69,6 +69,13 @@ func (t *ImageTemplate) Expand(component string) (string, error) {
 		}
 		return "", false
 	}, Versions)
+
+	componentKey := strings.Replace(strings.ToUpper(component), "-", "_", -1)
+	envVariableName := fmt.Sprintf(defaultImageEnvFormat, componentKey)
+
+	if err != nil {
+		glog.Fatalf("Error matching image format %s with Openshift version. \n Openshift can be additionally started with environment variable %s to match image versions.\n Expected no error while matching image versions - found %v\n", template, envVariableName, err)
+	}
 	return value, err
 }
 
@@ -116,12 +123,19 @@ func Versions(key string) (string, bool) {
 	switch key {
 	case "shortcommit":
 		s := openshiftVersion.GitCommit
+		if s == "" {
+			return "", false
+		}
 		if len(s) > 7 {
 			s = s[:7]
 		}
 		return s, true
 	case "version":
-		s := lastSemanticVersion(openshiftVersion.GitVersion)
+		gitVersion := openshiftVersion.GitVersion
+		if gitVersion == "" {
+			return "", false
+		}
+		s := lastSemanticVersion(gitVersion)
 		return s, true
 	default:
 		return "", false

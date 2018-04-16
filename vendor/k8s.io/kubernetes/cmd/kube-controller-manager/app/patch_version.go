@@ -1,5 +1,9 @@
 package app
 
+import (
+	apimachineryversion "k8s.io/apimachinery/pkg/version"
+)
+
 var (
 	// OpenshiftMajor return openshift major version
 	OpenshiftMajor string
@@ -13,18 +17,9 @@ var (
 	OpenshiftBuildDate string
 )
 
-// OpenshiftVersionInfo stores version information about Openshift accessible to k8s packages
-type OpenshiftVersionInfo struct {
-	Major      string `json:"major"`
-	Minor      string `json:"minor"`
-	GitCommit  string `json:"gitCommit"`
-	GitVersion string `json:"gitVersion"`
-	BuildDate  string `json:"buildDate"`
-}
-
 // GetOpenshiftVersion returns Overall Openshift codebase version
-func GetOpenshiftVersion() OpenshiftVersionInfo {
-	return OpenshiftVersionInfo{
+func GetOpenshiftVersion() apimachineryversion.Info {
+	return apimachineryversion.Info{
 		Major:      OpenshiftMajor,
 		Minor:      OpenshiftMinor,
 		GitCommit:  OpenshiftGitCommit,
