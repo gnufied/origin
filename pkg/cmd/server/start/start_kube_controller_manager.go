@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/golang/glog"
+	"github.com/openshift/origin/pkg/version"
 
 	controllerapp "k8s.io/kubernetes/cmd/kube-controller-manager/app"
 	_ "k8s.io/kubernetes/plugin/pkg/scheduler/algorithmprovider"
@@ -84,6 +85,12 @@ func computeKubeControllerManagerArgs(kubeconfigFile, saPrivateKeyFile, saRootCA
 }
 
 func runEmbeddedKubeControllerManager(kubeconfigFile, saPrivateKeyFile, saRootCAFile, podEvictionTimeout, openshiftConfigFile string, dynamicProvisioningEnabled bool, qps float32, burst int) {
+	openshiftVersion := version.Get()
+	controllerapp.OpenshiftMajor = openshiftVersion.Major
+	controllerapp.OpenshiftMinor = openshiftVersion.Minor
+	controllerapp.OpenshiftGitCommit = openshiftVersion.GitCommit
+	controllerapp.OpenshiftGitVersion = openshiftVersion.GitVersion
+	controllerapp.OpenshiftBuildDate = openshiftVersion.BuildDate
 	cmd := controllerapp.NewControllerManagerCommand()
 	args := computeKubeControllerManagerArgs(kubeconfigFile, saPrivateKeyFile, saRootCAFile, podEvictionTimeout, openshiftConfigFile, dynamicProvisioningEnabled, qps, burst)
 	if err := cmd.ParseFlags(args); err != nil {
