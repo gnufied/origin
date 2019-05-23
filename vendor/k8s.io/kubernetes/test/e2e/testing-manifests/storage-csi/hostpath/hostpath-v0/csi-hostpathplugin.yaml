@@ -55,6 +55,8 @@ spec:
             - mountPath: /var/lib/kubelet/pods
               mountPropagation: Bidirectional
               name: mountpoint-dir
+            - mountPath: /tmp
+              name: csi-data-dir
       volumes:
         - hostPath:
             path: /var/lib/kubelet/plugins/csi-hostpath-v0
@@ -68,3 +70,9 @@ spec:
             path: /var/lib/kubelet/plugins
             type: Directory
           name: registration-dir
+        - hostPath:
+            # 'path' is where PV data is persisted on host.
+            # using /tmp is also possible while the PVs will not available after plugin container recreation or host reboot
+            path: /tmp
+            type: DirectoryOrCreate
+          name: csi-data-dir
