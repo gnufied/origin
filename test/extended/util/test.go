@@ -380,8 +380,7 @@ var (
 			`SSH`, // TRIAGE
 			`should implement service.kubernetes.io/service-proxy-name`, // this is an optional test that requires SSH. sig-network
 			`should idle the service and DeploymentConfig properly`,     // idling with a single service and DeploymentConfig [Conformance]
-			`\[Driver: rbd\]`,        // https://bugzilla.redhat.com/show_bug.cgi?id=1711599, RBD drivers are not available in controllers?
-			`\[Driver: csi-hostpath`, // https://bugzilla.redhat.com/show_bug.cgi?id=1711607
+			`\[Driver: rbd\]`, // https://bugzilla.redhat.com/show_bug.cgi?id=1711599, RBD drivers are not available in controllers?
 			`should answer endpoint and wildcard queries for the cluster`,                // currently not supported by dns operator https://github.com/openshift/cluster-dns-operator/issues/43
 			`should propagate mounts to the host`,                                        // requires SSH, https://bugzilla.redhat.com/show_bug.cgi?id=1711600
 			`should allow ingress access on one named port`,                              // https://bugzilla.redhat.com/show_bug.cgi?id=1711602
