@@ -51,7 +51,7 @@ var _ = g.Describe("[sig-devex][Feature:Templates] template-api", func() {
 				Raw: []byte(runtime.EncodeOrDie(corev1Codec, &v1.Service{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "${NAME}-tester",
-						Namespace: "somevalue",
+						Namespace: oc.Namespace(),
 					},
 					Spec: v1.ServiceSpec{
 						ClusterIP:       "1.2.3.4",
@@ -124,7 +124,11 @@ var _ = g.Describe("[sig-devex][Feature:Templates] template-api", func() {
 				t.Errorf("%q: %v", path, err)
 				return
 			}
-			processedList, err := templateprocessingclient.NewDynamicTemplateProcessor(dynamicClient).ProcessToListFromUnstructured(template.(*unstructured.Unstructured))
+			unstructuredTemplate := template.(*unstructured.Unstructured)
+			if len(unstructuredTemplate.GetNamespace()) == 0 {
+				unstructuredTemplate.SetNamespace(oc.Namespace())
+			}
+			processedList, err := templateprocessingclient.NewDynamicTemplateProcessor(dynamicClient).ProcessToListFromUnstructured(unstructuredTemplate)
 			if err != nil {
 				t.Errorf("%q: %v", path, err)
 				return
